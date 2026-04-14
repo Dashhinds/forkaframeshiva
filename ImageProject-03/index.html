@@ -2,14 +2,409 @@
 <html>
   <head>
     <script src="https://aframe.io/releases/1.7.1/aframe.min.js"> </script>
+    <script>
+      AFRAME.registerComponent("fix-model-materials", {
+        init: function () {
+          this.el.addEventListener("model-loaded", () => {
+            const obj = this.el.getObject3D("mesh");
+            if (!obj) return;
+
+            obj.traverse((node) => {
+              if (node.isMesh && node.material) {
+                if (Array.isArray(node.material)) {
+                  node.material.forEach((mat) => {
+                    mat.transparent = false;
+                    mat.opacity = 1;
+                    mat.alphaTest = 0;
+                    mat.depthWrite = true;
+                    mat.depthTest = true;
+                    mat.side = THREE.FrontSide;
+                    mat.needsUpdate = true;
+                  });
+                } else {
+                  node.material.transparent = false;
+                  node.material.opacity = 1;
+                  node.material.alphaTest = 0;
+                  node.material.depthWrite = true;
+                  node.material.depthTest = true;
+                  node.material.side = THREE.FrontSide;
+                  node.material.needsUpdate = true;
+                }
+              }
+            });
+          });
+        },
+      });
+
+      AFRAME.registerComponent("activate-on-gaze", {
+        schema: {
+          target: { type: "selector" },
+        },
+        init: function () {
+          this.isOn = false;
+          this.timers = [];
+          this.glowOriginals = [];
+          this.handleEnter = this.handleEnter.bind(this);
+          this.handleLeave = this.handleLeave.bind(this);
+
+          this.el.addEventListener("mouseenter", this.handleEnter);
+          this.el.addEventListener("mouseleave", this.handleLeave);
+
+          this.targetEl = this.data.target || this.el;
+
+          // Cache original materials for reliable reset.
+          const glowTargets = this.targetEl.querySelectorAll("[data-glow]");
+          glowTargets.forEach((t) => {
+            const mat = t.getAttribute("material") || {};
+            this.glowOriginals.push({
+              el: t,
+              color: t.getAttribute("color") || mat.color || "#1a1620",
+              emissive: mat.emissive || "#000000",
+              emissiveIntensity: mat.emissiveIntensity ?? 0,
+              opacity: mat.opacity ?? 1,
+              transparent: mat.transparent ?? false,
+              metalness: mat.metalness,
+              roughness: mat.roughness,
+              shader: mat.shader,
+            });
+          });
+        },
+        remove: function () {
+          this.clearTimers();
+        },
+        clearTimers: function () {
+          this.timers.forEach((t) => clearTimeout(t));
+          this.timers.length = 0;
+        },
+        handleEnter: function () {
+          if (this.isOn) return;
+          this.isOn = true;
+          this.clearTimers();
+
+          const glowTargets = this.targetEl.querySelectorAll("[data-glow]");
+          glowTargets.forEach((t) => {
+            // Smooth fade into bright off-white glow.
+            t.setAttribute("material", "shader: standard; metalness: 0.1; roughness: 0.65;");
+            t.setAttribute("animation__toWhite", "property: material.color; to: #f7f4ea; dur: 2250; easing: easeInOutSine;");
+            t.setAttribute("animation__toEmissive", "property: material.emissiveIntensity; to: 2.8; dur: 2250; easing: easeInOutSine;");
+            t.setAttribute("material", "transparent: true; opacity: 1;");
+            t.setAttribute("animation__toOpacity", "property: material.opacity; to: 0.8; dur: 2250; easing: easeInOutSine;");
+            t.setAttribute("material", "emissive: #f7f4ea; emissiveIntensity: 0;");
+          });
+
+          const glowShell = this.targetEl.querySelector("#obeliskGlowShell");
+          if (glowShell) {
+            glowShell.setAttribute("visible", true);
+            glowShell.setAttribute("animation__fadeIn", "property: material.opacity; to: 0.38; dur: 2250; easing: easeInOutSine;");
+            glowShell.setAttribute("animation__grow", "property: scale; to: 1.35 1.35 1.35; dur: 3000; easing: easeOutCubic;");
+          }
+
+          const topLight = this.targetEl.querySelector("#obeliskTopLight");
+          if (topLight) {
+            topLight.setAttribute("animation__lightOn", "property: light.intensity; to: 1.3; dur: 2250; easing: easeInOutSine;");
+          }
+
+          const orbs = this.targetEl.querySelector("#obeliskOrbs");
+          if (orbs) {
+            orbs.setAttribute("visible", false);
+          }
+
+          const beam = this.targetEl.querySelector("#obeliskBeam");
+          if (beam) {
+            beam.setAttribute("visible", true);
+            beam.setAttribute("scale", "1 0 1");
+            beam.setAttribute("material", "opacity: 0;");
+            beam.setAttribute("position", "0 8.9 0");
+
+            this.timers.push(
+              setTimeout(() => {
+                if (!this.isOn) return;
+                beam.setAttribute("animation__beamGrow", "property: scale; to: 1 1 1; dur: 500; easing: easeOutCubic;");
+                beam.setAttribute("animation__beamRise", "property: position; to: 0 28 0; dur: 500; easing: easeOutCubic;");
+                beam.setAttribute("animation__beamFade", "property: material.opacity; to: 1; dur: 350; easing: easeOutCubic;");
+
+                const orbs = this.targetEl.querySelector("#obeliskOrbs");
+                if (orbs) {
+                  orbs.removeAttribute("animation__orbsOut");
+                  orbs.removeAttribute("animation__orbsIn");
+                  orbs.setAttribute("scale", "0.6 0.6 0.6");
+                  orbs.setAttribute("visible", true);
+                  orbs.setAttribute("animation__orbsIn", "property: scale; to: 1 1 1; dur: 700; easing: easeOutCubic;");
+                }
+              }, 2625)
+            );
+          }
+        },
+        handleLeave: function () {
+          if (!this.isOn) return;
+          this.isOn = false;
+          this.clearTimers();
+
+          const glowTargets = this.targetEl.querySelectorAll("[data-glow]");
+          glowTargets.forEach((t) => {
+            t.removeAttribute("animation__toWhite");
+            t.removeAttribute("animation__toEmissive");
+            t.removeAttribute("animation__toOpacity");
+            t.setAttribute("animation__fromWhite", "property: material.color; to: #1a1620; dur: 1625; easing: easeInOutSine;");
+            t.setAttribute("animation__emissiveOff", "property: material.emissiveIntensity; to: 0; dur: 1625; easing: easeInOutSine;");
+            t.setAttribute("animation__opacityBack", "property: material.opacity; to: 1; dur: 900; easing: easeInOutSine;");
+          });
+
+          this.timers.push(
+            setTimeout(() => {
+              if (this.isOn) return;
+              this.glowOriginals.forEach((o) => {
+                o.el.removeAttribute("animation__fromWhite");
+                o.el.removeAttribute("animation__emissiveOff");
+                o.el.removeAttribute("animation__opacityBack");
+
+                o.el.setAttribute("color", o.color);
+                o.el.setAttribute(
+                  "material",
+                  `shader: ${o.shader || "standard"}; color: ${o.color}; emissive: ${o.emissive || "#000000"}; emissiveIntensity: ${o.emissiveIntensity || 0}; transparent: ${o.transparent ? "true" : "false"}; opacity: ${o.opacity ?? 1}; metalness: ${o.metalness ?? 0.1}; roughness: ${o.roughness ?? 0.65};`
+                );
+              });
+            }, 1700)
+          );
+
+          const glowShell = this.targetEl.querySelector("#obeliskGlowShell");
+          if (glowShell) {
+            glowShell.removeAttribute("animation__fadeIn");
+            glowShell.removeAttribute("animation__grow");
+            glowShell.setAttribute("animation__fadeOut", "property: material.opacity; to: 0; dur: 1625; easing: easeInOutSine;");
+            this.timers.push(setTimeout(() => glowShell.setAttribute("visible", false), 1700));
+          }
+
+          const beam = this.targetEl.querySelector("#obeliskBeam");
+          if (beam) {
+            beam.removeAttribute("animation__beamGrow");
+            beam.removeAttribute("animation__beamRise");
+            beam.removeAttribute("animation__beamFade");
+            beam.setAttribute("animation__beamOut", "property: material.opacity; to: 0; dur: 1125; easing: easeInOutSine;");
+            beam.setAttribute("animation__beamShrink", "property: scale; to: 1 0 1; dur: 1125; easing: easeInOutSine;");
+            beam.setAttribute("animation__beamFall", "property: position; to: 0 8.9 0; dur: 1125; easing: easeInOutSine;");
+            this.timers.push(setTimeout(() => beam.setAttribute("visible", false), 1200));
+          }
+
+          const orbs = this.targetEl.querySelector("#obeliskOrbs");
+          if (orbs) {
+            orbs.removeAttribute("animation__orbsIn");
+            orbs.setAttribute("animation__orbsOut", "property: scale; to: 0.6 0.6 0.6; dur: 1250; easing: easeInOutSine;");
+            this.timers.push(setTimeout(() => orbs.setAttribute("visible", false), 1300));
+          }
+
+          const topLight = this.targetEl.querySelector("#obeliskTopLight");
+          if (topLight) {
+            topLight.setAttribute("animation__lightOff", "property: light.intensity; to: 0; dur: 1625; easing: easeInOutSine;");
+          }
+        },
+      });
+    </script>
   </head>
   <body>
     <a-scene>
+      <a-entity position="0 1.6 0">
+        <a-camera>
+          <a-cursor fuse="true" fuse-timeout="700" raycaster="objects: .gazeable"></a-cursor>
+        </a-camera>
+      </a-entity>
+
+      <!-- Starter code (kept, but commented out) -->
+      <!--
       <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"></a-box>
       <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E"></a-sphere>
       <a-cylinder position="1 0.75 -3" radius="0.5" height="1.5" color="#FFC65D"></a-cylinder>
       <a-plane position="0 0 -4" rotation="-90 0 0" width="4" height="4" color="#7BC8A4"></a-plane>
       <a-sky color="#ECECEC"></a-sky>
+      -->
+
+      <a-sky src="sand.png" radius="800"></a-sky>
+
+      <!-- simple lighting so things aren't pure black -->
+      <a-entity light="type: ambient; intensity: 0.65; color: #e6d9c8"></a-entity>
+      <a-entity light="type: directional; intensity: 0.95; color: #fff2dd" position="-1 2 1"></a-entity>
+      <a-entity light="type: directional; intensity: 0.35; color: #dbe9ff" position=".5 1.5 -1"></a-entity>
+
+      <!-- large desert-colored ground plane -->
+      <a-plane
+        position="0 0 -4"
+        rotation="-90 0 0"
+        width="180"
+        height="180"
+        color="#5a4332"
+      ></a-plane>
+
+      <!-- downloaded pyramid model -->
+      <a-entity
+        position="-115 0 -385"
+        rotation="0 -35 0"
+        scale="20 20 20"
+        gltf-model="url(Giza%20Pyramid%20Complex.glb)"
+        fix-model-materials
+      ></a-entity>
+
+      ></a-entity>
+
+       <!-- UFO model in the air, north right -->
+       <a-entity
+       position="-265 125 105"
+       rotation="0 25 0"
+       scale=".5 .5 .5"
+       gltf-model="url(Black%20Triangle%20UFO%20Aurora.glb)"
+       fix-model-materials
+       ></a-entity>
+
+       <!-- Another UFO model -->
+       <a-entity
+       position="-165 85 -35"
+       rotation="0 45 0"
+       scale="5 5 5"
+       gltf-model="url(UFO%20%281%29.glb)"
+       fix-model-materials
+       ></a-entity>
+
+      <!-- old obelisk -->
+      <!--
+      <a-box
+        position="6 3 -12"
+        width="1.2"
+        height="7"
+        depth="1.2"
+        color="#141018"
+      ></a-box>
+      -->
+
+      <!-- new obelisk -->
+      <a-entity id="obelisk" position="6 0 -12">
+        <!-- base stack -->
+        <a-box position="0 0.25 0" width="6" height="0.5" depth="6" color="#2a2432"></a-box>
+        <a-box position="0 0.60 0" width="4.8" height="0.2" depth="4.8" color="#342b40"></a-box>
+        <a-box position="0 0.85 0" width="4.0" height="0.3" depth="4.0" color="#2a2432"></a-box>
+
+        <!-- corner pylons -->
+        <a-box position="2.1 0.65 2.1" width="0.55" height="1.3" depth="0.55" color="#15121a"></a-box>
+        <a-box position="-2.1 0.65 2.1" width="0.55" height="1.3" depth="0.55" color="#15121a"></a-box>
+        <a-box position="2.1 0.65 -2.1" width="0.55" height="1.3" depth="0.55" color="#15121a"></a-box>
+        <a-box position="-2.1 0.65 -2.1" width="0.55" height="1.3" depth="0.55" color="#15121a"></a-box>
+
+        <!-- main plinth -->
+        <a-box position="0 1.40 0" width="2.4" height="1.1" depth="2.4" color="#2a2432"></a-box>
+        <a-box position="0 2.05 0" width="2.0" height="0.2" depth="2.0" color="#342b40"></a-box>
+
+        <!-- central shaft (tapered) -->
+        <a-box position="0 3.30 0" width="1.05" height="2.3" depth="1.05" color="#2f2838"></a-box>
+        <a-box position="0 5.00 0" width="0.92" height="1.6" depth="0.92" color="#2a2432"></a-box>
+        <a-box position="0 6.25 0" width="0.78" height="1.2" depth="0.78" color="#2f2838"></a-box>
+        <a-box position="0 7.25 0" width="0.65" height="1.0" depth="0.65" color="#2a2432"></a-box>
+
+        <!-- side ribs -->
+        <a-box position="0.62 4.00 0" width="0.12" height="4.8" depth="0.55" color="#1a1620"></a-box>
+        <a-box position="-0.62 4.00 0" width="0.12" height="4.8" depth="0.55" color="#1a1620"></a-box>
+        <a-box position="0 4.00 0.62" width="0.55" height="4.8" depth="0.12" color="#1a1620"></a-box>
+        <a-box position="0 4.00 -0.62" width="0.55" height="4.8" depth="0.12" color="#1a1620"></a-box>
+
+        <!-- cap -->
+        <a-entity position="0 0 0">
+          <!-- gaze target (only this triggers the sequence) -->
+          <a-box
+            class="gazeable"
+            activate-on-gaze="target: #obelisk"
+            position="0 8.45 0"
+            width="1.6"
+            height="1.6"
+            depth="1.6"
+            material="transparent: true; opacity: 0.001; depthWrite: false"
+          ></a-box>
+
+          <!-- rotating top block -->
+          <a-box
+            data-glow
+            position="0 8.10 0"
+            width="0.85"
+            height="0.25"
+            depth="0.85"
+            color="#1a1620"
+            animation="property: rotation; to: 0 360 0; dur: 18000; easing: linear; loop: true"
+          ></a-box>
+
+          <!-- rotating top prism/cap -->
+          <a-cone
+            data-glow
+            position="0 8.65 0"
+            radius-bottom="0.45"
+            radius-top="0.05"
+            height="1.0"
+            segments-radial="4"
+            color="#0f0d12"
+            animation="property: rotation; to: 0 -360 0; dur: 22000; easing: linear; loop: true"
+          ></a-cone>
+
+          <!-- hidden effects (appear after gaze) -->
+          <a-entity light="type: point; color: #f7f4ea; intensity: 0; distance: 14" position="0 8.6 0" id="obeliskTopLight"></a-entity>
+
+          <a-sphere
+            id="obeliskGlowShell"
+            visible="false"
+            position="0 8.45 0"
+            radius="0.99"
+            material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.1; transparent: true; opacity: 0; depthWrite: false;"
+            animation="property: scale; dir: alternate; dur: 2000; easing: easeInOutSine; loop: true; to: 1.18 1.18 1.18"
+          ></a-sphere>
+
+          <a-cylinder
+            id="obeliskBeam"
+            visible="false"
+            position="0 28 0"
+            radius="0.14"
+            height="40"
+            material="shader: standard; color: #e7f2ff; emissive: #e7f2ff; emissiveIntensity: 1.6; transparent: true; opacity: 0; side: double; depthWrite: false;"
+          ></a-cylinder>
+
+          <a-entity
+            id="obeliskOrbs"
+            visible="false"
+            position="0 7.95 0"
+            scale="0.6 0.6 0.6"
+            animation="property: rotation; to: 0 -360 0; dur: 26000; easing: linear; loop: true"
+            animation__pulse="property: scale; dir: alternate; dur: 2400; easing: easeInOutSine; loop: true; to: 1.5 1.5 1.5"
+          >
+            <a-sphere radius="0.070" position="1.80 0.60 0.60" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.8; transparent: true; opacity: 0.85;"></a-sphere>
+            <a-sphere radius="0.055" position="-1.32 0.00 1.08" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.80;"></a-sphere>
+            <a-sphere radius="0.050" position="0.30 1.08 -1.32" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.80;"></a-sphere>
+            <a-sphere radius="0.060" position="-0.60 1.68 0.12" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.7; transparent: true; opacity: 0.85;"></a-sphere>
+            <a-sphere radius="0.045" position="1.08 -0.12 -0.84" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.75;"></a-sphere>
+            <a-sphere radius="0.055" position="-1.92 0.84 -0.30" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.80;"></a-sphere>
+
+            <a-sphere radius="0.048" position="1.44 0.24 -0.60" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.78;"></a-sphere>
+            <a-sphere radius="0.062" position="-0.96 0.48 -1.68" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.7; transparent: true; opacity: 0.84;"></a-sphere>
+            <a-sphere radius="0.044" position="0.48 1.80 1.20" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.76;"></a-sphere>
+            <a-sphere radius="0.058" position="-0.36 1.32 -1.08" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.82;"></a-sphere>
+            <a-sphere radius="0.052" position="2.10 0.90 -0.12" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.80;"></a-sphere>
+            <a-sphere radius="0.046" position="-1.56 1.56 0.60" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.76;"></a-sphere>
+
+            <a-sphere radius="0.060" position="0.72 0.36 1.92" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.7; transparent: true; opacity: 0.84;"></a-sphere>
+            <a-sphere radius="0.050" position="-0.72 0.24 1.68" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.78;"></a-sphere>
+            <a-sphere radius="0.042" position="1.32 1.56 0.00" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.74;"></a-sphere>
+            <a-sphere radius="0.068" position="-1.80 0.48 0.24" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.8; transparent: true; opacity: 0.86;"></a-sphere>
+            <a-sphere radius="0.054" position="0.24 -0.12 -1.92" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.80;"></a-sphere>
+            <a-sphere radius="0.047" position="-1.20 1.80 -0.48" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.76;"></a-sphere>
+
+            <a-sphere radius="0.056" position="1.68 1.32 0.84" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.82;"></a-sphere>
+            <a-sphere radius="0.043" position="-0.48 0.96 1.44" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.74;"></a-sphere>
+            <a-sphere radius="0.065" position="-0.24 0.60 -1.56" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.7; transparent: true; opacity: 0.85;"></a-sphere>
+            <a-sphere radius="0.051" position="0.96 1.92 -0.72" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.79;"></a-sphere>
+            <a-sphere radius="0.045" position="-2.04 1.08 0.12" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.75;"></a-sphere>
+            <a-sphere radius="0.058" position="0.12 1.32 2.04" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.82;"></a-sphere>
+
+            <a-sphere radius="0.049" position="0.60 0.72 -1.20" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.78;"></a-sphere>
+            <a-sphere radius="0.061" position="-1.08 0.12 -0.72" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.7; transparent: true; opacity: 0.84;"></a-sphere>
+            <a-sphere radius="0.044" position="1.20 0.12 0.96" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.74;"></a-sphere>
+            <a-sphere radius="0.057" position="-1.68 1.20 1.32" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.6; transparent: true; opacity: 0.82;"></a-sphere>
+            <a-sphere radius="0.052" position="1.92 0.36 -1.08" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.5; transparent: true; opacity: 0.80;"></a-sphere>
+            <a-sphere radius="0.046" position="-0.12 1.92 0.72" material="shader: standard; color: #f7f4ea; emissive: #f7f4ea; emissiveIntensity: 1.4; transparent: true; opacity: 0.76;"></a-sphere>
+          </a-entity>
+        </a-entity>
+      </a-entity>
     </a-scene>
   </body>
 </html>
